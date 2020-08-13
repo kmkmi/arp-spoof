@@ -35,7 +35,7 @@ pcap_if_t* dev;
 
 void usage() {
     printf("syntax: arp-spoof <interface> <sender ip 1> <target ip 1> [<sender ip 2> <target ip 2>...]\n");
-    printf("sample: send-arp wlan0 192.168.0.2 192.168.0.1 192.168.0.3 192.168.0.1\n");
+    printf("sample: arp-spoof wlan0 192.168.0.2 192.168.0.1 192.168.0.3 192.168.0.1\n");
 }
 
 
